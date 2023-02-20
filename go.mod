@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	dubbo.apache.org/dubbo-go/v3 v3.0.3-rc2
+	gitee.com/chunanyong/zorm v1.6.6
 	github.com/gin-gonic/gin v1.8.0
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/parnurzeal/gorequest v0.2.16

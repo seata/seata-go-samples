@@ -18,21 +18,33 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
+	"gitee.com/chunanyong/zorm"
 	"github.com/seata/seata-go/pkg/client"
 )
 
 type OrderTbl struct {
-	id            int
-	userID        string
-	commodityCode string
-	count         int64
-	money         int64
-	descs         string
+	zorm.EntityStruct
+
+	Id            int64  `column:"id"`
+	UserId        string `column:"user_id"`
+	CommodityCode string `column:"commodity_code"`
+	Count         int64  `column:"count"`
+	Money         int64  `column:"money"`
+	Descs         string `column:"descs"`
+}
+
+func (entity *OrderTbl) GetTableName() string {
+	return "order_tbl"
+}
+
+func (entity *OrderTbl) GetPKColumnName() string {
+	return "id"
 }
 
 var (
@@ -47,6 +59,7 @@ func main() {
 	initService()
 
 	insertId := insertData()
+	fmt.Printf("insertId = %d\n", insertId)
 
 	//insertDuplicateData(insertId)
 
@@ -68,19 +81,20 @@ func main() {
 }
 
 func insertData() int64 {
-	ret, err := db.Exec("insert into order_tbl (`user_id`, `commodity_code`, `count`, `money`, `descs`) values (?, ?, ?, ?, ?)",
-		userID, commodityCode, 100, 100, descs)
-	if err != nil {
-		panic(err)
+	order := OrderTbl{
+		UserId:        userID,
+		CommodityCode: commodityCode,
+		Count:         100,
+		Money:         100,
+		Descs:         descs,
 	}
-
-	rows, err := ret.RowsAffected()
+	rows, err := zorm.Insert(context.Background(), &order)
 	if err != nil {
 		fmt.Printf("insert failed, err:%v\n", err)
 		panic(err)
 	}
 
-	insertId, err := ret.LastInsertId()
+	insertId := order.Id
 	if err != nil {
 		fmt.Printf("get insert id failed, err:%v\n", err)
 		panic(err)
@@ -103,12 +117,9 @@ func batchInsertData() []string {
 	}
 	sql = sql[:len(sql)-1]
 
-	ret, err := db.Exec(sql)
-	if err != nil {
-		panic(err)
-	}
-
-	rows, err := ret.RowsAffected()
+	finder := zorm.NewFinder().Append(sql)
+	finder.InjectionCheck = false
+	rows, err := zorm.UpdateFinder(context.Background(), finder)
 	if err != nil {
 		fmt.Printf("insert failed, err:%v\n", err)
 		panic(err)
@@ -118,23 +129,22 @@ func batchInsertData() []string {
 }
 
 func insertDuplicateData(id int64) int64 {
-	ret, err := db.Exec("insert into order_tbl (`id`, `user_id`, `commodity_code`, `count`, `money`, `descs`) values (?,?, ?, ?, ?, ?)",
-		id, userID, commodityCode, 100, 100, descs)
-	if err != nil {
-		panic(err)
+	order := OrderTbl{
+		Id:            id,
+		UserId:        userID,
+		CommodityCode: commodityCode,
+		Count:         100,
+		Money:         100,
+		Descs:         descs,
 	}
+	rows, err := zorm.Insert(context.Background(), &order)
 
-	rows, err := ret.RowsAffected()
 	if err != nil {
 		fmt.Printf("insert failed, err:%v\n", err)
 		panic(err)
 	}
 
-	insertId, err := ret.LastInsertId()
-	if err != nil {
-		fmt.Printf("get insert id failed, err:%v\n", err)
-		panic(err)
-	}
+	insertId := order.Id
 
 	fmt.Printf("insert success： %d.\n", rows)
 	return insertId
@@ -142,8 +152,8 @@ func insertDuplicateData(id int64) int64 {
 
 func selectData(id int64) {
 	var orderTbl OrderTbl
-	row := db.QueryRow("select id,user_id,commodity_code,count,money,descs from  order_tbl where id = ? ", id)
-	err := row.Scan(&orderTbl.id, &orderTbl.userID, &orderTbl.commodityCode, &orderTbl.count, &orderTbl.money, &orderTbl.descs)
+	finder := zorm.NewFinder().Append("select id,user_id,commodity_code,count,money,descs from  order_tbl where id = ? ", id)
+	has, err := zorm.QueryRow(context.Background(), finder, &orderTbl)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			fmt.Println("select return null")
@@ -151,17 +161,19 @@ func selectData(id int64) {
 		}
 		panic(err)
 	}
+
+	if !has {
+		fmt.Println("select return null")
+		return
+	}
 	fmt.Printf("select --> : %v\n", orderTbl)
 }
 
 func updateData(insertID int64) error {
 	sql := "update order_tbl set descs=? where id=?"
-	ret, err := db.Exec(sql, fmt.Sprintf("NewDescs-%d", time.Now().UnixMilli()), insertID)
-	if err != nil {
-		fmt.Printf("update failed, err:%v\n", err)
-		return nil
-	}
-	rows, err := ret.RowsAffected()
+	finder := zorm.NewFinder().Append(sql, fmt.Sprintf("NewDescs-%d", time.Now().UnixMilli()), insertID)
+
+	rows, err := zorm.UpdateFinder(context.Background(), finder)
 	if err != nil {
 		fmt.Printf("update failed, err:%v\n", err)
 		return nil
@@ -172,12 +184,8 @@ func updateData(insertID int64) error {
 
 func deleteData(insertID int64) error {
 	sql := "delete from order_tbl where id=?"
-	ret, err := db.Exec(sql, insertID)
-	if err != nil {
-		fmt.Printf("delete failed, err:%v\n", err)
-		return nil
-	}
-	rows, err := ret.RowsAffected()
+	finder := zorm.NewFinder().Append(sql, insertID)
+	rows, err := zorm.UpdateFinder(context.Background(), finder)
 	if err != nil {
 		fmt.Printf("delete failed, err:%v\n", err)
 		return nil
@@ -191,13 +199,9 @@ func batchDeleteData(userIds []string) error {
 	for _, v := range userIds {
 		sql += fmt.Sprintf("delete from order_tbl where user_id = '%s';", v)
 	}
-	ret, err := db.Exec(sql)
-	if err != nil {
-		fmt.Printf("batch delete failed, err:%v\n", err)
-		return nil
-	}
-
-	rows, err := ret.RowsAffected()
+	finder := zorm.NewFinder().Append(sql)
+	finder.InjectionCheck = false
+	rows, err := zorm.UpdateFinder(context.Background(), finder)
 	if err != nil {
 		fmt.Printf("batch delete failed, err:%v\n", err)
 		return nil

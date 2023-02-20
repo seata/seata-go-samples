@@ -19,48 +19,46 @@ package main
 
 import (
 	"context"
-	"flag"
-	"fmt"
 	"net/http"
-	"time"
 
-	"github.com/parnurzeal/gorequest"
+	"github.com/gin-gonic/gin"
 
 	"github.com/seata/seata-go/pkg/client"
 	"github.com/seata/seata-go/pkg/constant"
-	"github.com/seata/seata-go/pkg/tm"
 	"github.com/seata/seata-go/pkg/util/log"
 )
 
-var serverIpPort = "http://127.0.0.1:8080"
-
 func main() {
-	flag.Parse()
 	client.InitPath("./conf/seatago.yml")
+	initService()
 
-	bgCtx, cancel := context.WithTimeout(context.Background(), time.Minute*10)
-	defer cancel()
+	r := gin.Default()
 
-	transInfo := &tm.GtxConfig{
-		Name:    "ATSampleLocalGlobalTx",
-		Timeout: time.Second * 30,
+	// NOTE: when use gin，must set ContextWithFallback true when gin version >= 1.8.1
+	// r.ContextWithFallback = true
+
+	// Without using the middleware provided by seata-go, manually fetch xid and bind to ctx
+	//r.Use(ginmiddleware.TransactionMiddleware())
+
+	r.POST("/updateDataSuccess", func(c *gin.Context) {
+		log.Infof("get tm updateData")
+
+		xid := c.GetHeader(constant.XidKey)
+		if xid == "" {
+			xid = c.GetHeader(constant.XidKeyLowercase)
+		}
+		newCtx := c.Request.Context()
+		newCtx = context.WithValue(newCtx, "XID", xid)
+		c.Request = c.Request.WithContext(newCtx)
+
+		if err := updateDataSuccess(newCtx); err != nil {
+			c.JSON(http.StatusBadRequest, "updateData failure")
+			return
+		}
+		c.JSON(http.StatusOK, "updateData ok")
+	})
+
+	if err := r.Run(":8080"); err != nil {
+		log.Fatalf("start tcc server fatal: %v", err)
 	}
-
-	if err := tm.WithGlobalTx(bgCtx, transInfo, updateData); err != nil {
-		panic(fmt.Sprintf("tm update data err, %v", err))
-	}
-}
-
-func updateData(ctx context.Context) (re error) {
-	request := gorequest.New()
-	log.Infof("branch transaction begin")
-
-	request.Post(serverIpPort+"/updateDataSuccess").
-		Set(constant.XidKey, tm.GetXID(ctx)).
-		End(func(response gorequest.Response, body string, errs []error) {
-			if response.StatusCode != http.StatusOK {
-				re = fmt.Errorf("update data fail")
-			}
-		})
-	return
 }
